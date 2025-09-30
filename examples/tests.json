@@ -1,0 +1,10 @@
+[
+  {
+    "name": "math add",
+    "code": "expect(1+2).toBe(3);"
+  },
+  {
+    "name": "truthy check",
+    "code": "expect(true).toBeTruthy();"
+  }
+]
