@@ -1,5 +1,5 @@
 {
-  "name": "selftest",
+  "name": "@ahr-ahr/selftest",
   "version": "1.0.0",
   "description": "Universal self-test runner with JSON output and CLI support",
   "main": "core.cjs",
