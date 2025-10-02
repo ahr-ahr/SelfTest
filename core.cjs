@@ -1,24 +1,49 @@
 #!/usr/bin/env node
 const fs = require("fs");
-const argv = require("minimist")(process.argv.slice(2));
+const path = require("path");
+const minimist = require("minimist");
 const chalk = require("chalk");
 const cliProgress = require("cli-progress");
 
-// export supaya bisa dipakai programmatically juga
-module.exports = { runCore };
+// === auto discover ===
+function autoDiscover(dir) {
+  const discovered = [];
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith(".js"));
 
-if (require.main === module) {
-  runCore(argv);
+  for (const f of files) {
+    const code = fs.readFileSync(path.join(dir, f), "utf8");
+
+    const matches = code.matchAll(/function\s+([a-zA-Z0-9_]+)\s*\(/g);
+    for (const m of matches) {
+      discovered.push({
+        name: `Auto: ${m[1]}() should not throw`,
+        code: `if (typeof ${m[1]} === "function") { ${m[1]}(); expect(true).toBeTruthy(); }`,
+      });
+    }
+  }
+  return discovered;
 }
 
-function runCore(argv) {
+// === core runner ===
+function runCore(argv, directTests = null) {
   const dev = argv.dev || false;
+  const autoDir = argv.auto || null;
   const inputFile = argv._[0];
   const outputFile = argv.json || null;
 
-  const tests = JSON.parse(fs.readFileSync(inputFile, "utf8"));
-  const results = [];
+  let tests;
+  if (directTests) {
+    tests = directTests;
+  } else if (autoDir) {
+    tests = autoDiscover(autoDir);
+  } else if (inputFile) {
+    tests = JSON.parse(fs.readFileSync(inputFile, "utf8"));
+  } else {
+    console.error("Usage: selftest <tests.json> [--dev] [--auto ./src]");
+    process.exit(1);
+  }
 
+  const results = [];
   const bar = new cliProgress.SingleBar(
     {
       format: `${chalk.yellow(
@@ -39,18 +64,11 @@ function runCore(argv) {
       const fn = new Function("expect", t.code);
       fn(expect);
       const dur = Date.now() - start;
-      results.push({
-        name: t.name,
-        status: "passed",
-        error: null,
-        duration_ms: dur,
-      });
-      if (dev) {
+      results.push({ name: t.name, status: "passed", duration_ms: dur });
+      if (dev)
         console.log(
           `${chalk.green("✔")} ${t.name} ${chalk.gray(`(${dur}ms)`)}`
         );
-        bar.increment();
-      }
     } catch (e) {
       const dur = Date.now() - start;
       results.push({
@@ -59,24 +77,18 @@ function runCore(argv) {
         error: e.message,
         duration_ms: dur,
       });
-      if (dev) {
-        console.log(
-          `${chalk.red("✖")} ${t.name} ${chalk.gray(
-            `(${dur}ms)`
-          )}\n  ${chalk.red(e.message)}`
-        );
-        bar.increment();
-      }
+      if (dev)
+        console.log(`${chalk.red("✖")} ${t.name}\n  ${chalk.red(e.message)}`);
     }
+    if (dev) bar.increment();
   }
-
   if (dev) bar.stop();
 
   const summary = {
     total: results.length,
     passed: results.filter((r) => r.status === "passed").length,
     failed: results.filter((r) => r.status === "failed").length,
-    duration_ms: results.reduce((sum, r) => sum + r.duration_ms, 0),
+    duration_ms: results.reduce((s, r) => s + r.duration_ms, 0),
   };
 
   const out = {
@@ -95,31 +107,30 @@ function runCore(argv) {
   } else {
     console.log(JSON.stringify(out, null, 2));
   }
+}
 
-  if (dev) {
-    console.log(`\n=== ${chalk.bold("SUMMARY")} ===`);
-    console.log(`Total: ${summary.total}`);
-    console.log(`${chalk.green("Passed")}: ${summary.passed}`);
-    console.log(`${chalk.red("Failed")}: ${summary.failed}`);
-    console.log(`Duration: ${summary.duration_ms} ms`);
-  }
+function expect(actual) {
+  return {
+    toBe(expected) {
+      if (actual !== expected)
+        throw new Error(`Expected ${actual} toBe ${expected}`);
+    },
+    toEqual(expected) {
+      if (JSON.stringify(actual) !== JSON.stringify(expected))
+        throw new Error(`Expected ${actual} toEqual ${expected}`);
+    },
+    toBeTruthy() {
+      if (!actual) throw new Error("Expected truthy");
+    },
+    toBeFalsy() {
+      if (actual) throw new Error("Expected falsy");
+    },
+  };
+}
 
-  function expect(actual) {
-    return {
-      toBe(expected) {
-        if (actual !== expected)
-          throw new Error(`Expected ${actual} toBe ${expected}`);
-      },
-      toEqual(expected) {
-        if (JSON.stringify(actual) !== JSON.stringify(expected))
-          throw new Error(`Expected ${actual} toEqual ${expected}`);
-      },
-      toBeTruthy() {
-        if (!actual) throw new Error("Expected truthy");
-      },
-      toBeFalsy() {
-        if (actual) throw new Error("Expected falsy");
-      },
-    };
-  }
+module.exports = { runCore };
+
+if (require.main === module) {
+  const argv = minimist(process.argv.slice(2));
+  runCore(argv);
 }

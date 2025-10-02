@@ -1,17 +1,59 @@
 #!/usr/bin/env node
 import fs from "fs";
+import path from "path";
 import minimist from "minimist";
 import chalk from "chalk";
 import cliProgress from "cli-progress";
 
-export function runCore(argv) {
+// === auto discover ===
+function autoDiscover(dir) {
+  const discovered = [];
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith(".js"));
+
+  for (const f of files) {
+    const code = fs.readFileSync(path.join(dir, f), "utf8");
+
+    // function declaration
+    const matches = code.matchAll(/function\s+([a-zA-Z0-9_]+)\s*\(/g);
+    for (const m of matches) {
+      discovered.push({
+        name: `Auto: ${m[1]}() should not throw`,
+        code: `if (typeof ${m[1]} === "function") { ${m[1]}(); expect(true).toBeTruthy(); }`,
+      });
+    }
+
+    // const arrow function
+    const arrowMatches = code.matchAll(/const\s+([a-zA-Z0-9_]+)\s*=\s*\(/g);
+    for (const m of arrowMatches) {
+      discovered.push({
+        name: `Auto: ${m[1]}() should not throw`,
+        code: `if (typeof ${m[1]} === "function") { ${m[1]}(); expect(true).toBeTruthy(); }`,
+      });
+    }
+  }
+  return discovered;
+}
+
+// === runner ===
+export function runCore(argv, directTests = null) {
   const dev = argv.dev || false;
+  const autoDir = argv.auto || null;
   const inputFile = argv._[0];
   const outputFile = argv.json || null;
 
-  const tests = JSON.parse(fs.readFileSync(inputFile, "utf8"));
-  const results = [];
+  let tests;
+  if (directTests) {
+    tests = directTests;
+  } else if (autoDir) {
+    tests = autoDiscover(autoDir);
+  } else if (inputFile) {
+    tests = JSON.parse(fs.readFileSync(inputFile, "utf8"));
+  } else {
+    console.error("Usage: selftest <tests.json> [--dev] [--auto ./src]");
+    process.exit(1);
+  }
 
+  const results = [];
   const bar = new cliProgress.SingleBar(
     {
       format: `${chalk.yellow(
@@ -32,18 +74,11 @@ export function runCore(argv) {
       const fn = new Function("expect", t.code);
       fn(expect);
       const dur = Date.now() - start;
-      results.push({
-        name: t.name,
-        status: "passed",
-        error: null,
-        duration_ms: dur,
-      });
-      if (dev) {
+      results.push({ name: t.name, status: "passed", duration_ms: dur });
+      if (dev)
         console.log(
           `${chalk.green("✔")} ${t.name} ${chalk.gray(`(${dur}ms)`)}`
         );
-        bar.increment();
-      }
     } catch (e) {
       const dur = Date.now() - start;
       results.push({
@@ -52,24 +87,18 @@ export function runCore(argv) {
         error: e.message,
         duration_ms: dur,
       });
-      if (dev) {
-        console.log(
-          `${chalk.red("✖")} ${t.name} ${chalk.gray(
-            `(${dur}ms)`
-          )}\n  ${chalk.red(e.message)}`
-        );
-        bar.increment();
-      }
+      if (dev)
+        console.log(`${chalk.red("✖")} ${t.name}\n  ${chalk.red(e.message)}`);
     }
+    if (dev) bar.increment();
   }
-
   if (dev) bar.stop();
 
   const summary = {
     total: results.length,
     passed: results.filter((r) => r.status === "passed").length,
     failed: results.filter((r) => r.status === "failed").length,
-    duration_ms: results.reduce((sum, r) => sum + r.duration_ms, 0),
+    duration_ms: results.reduce((s, r) => s + r.duration_ms, 0),
   };
 
   const out = {
@@ -88,36 +117,28 @@ export function runCore(argv) {
   } else {
     console.log(JSON.stringify(out, null, 2));
   }
-
-  if (dev) {
-    console.log(`\n=== ${chalk.bold("SUMMARY")} ===`);
-    console.log(`Total: ${summary.total}`);
-    console.log(`${chalk.green("Passed")}: ${summary.passed}`);
-    console.log(`${chalk.red("Failed")}: ${summary.failed}`);
-    console.log(`Duration: ${summary.duration_ms} ms`);
-  }
-
-  function expect(actual) {
-    return {
-      toBe(expected) {
-        if (actual !== expected)
-          throw new Error(`Expected ${actual} toBe ${expected}`);
-      },
-      toEqual(expected) {
-        if (JSON.stringify(actual) !== JSON.stringify(expected))
-          throw new Error(`Expected ${actual} toEqual ${expected}`);
-      },
-      toBeTruthy() {
-        if (!actual) throw new Error("Expected truthy");
-      },
-      toBeFalsy() {
-        if (actual) throw new Error("Expected falsy");
-      },
-    };
-  }
 }
 
-// CLI entry
+function expect(actual) {
+  return {
+    toBe(expected) {
+      if (actual !== expected)
+        throw new Error(`Expected ${actual} toBe ${expected}`);
+    },
+    toEqual(expected) {
+      if (JSON.stringify(actual) !== JSON.stringify(expected))
+        throw new Error(`Expected ${actual} toEqual ${expected}`);
+    },
+    toBeTruthy() {
+      if (!actual) throw new Error("Expected truthy");
+    },
+    toBeFalsy() {
+      if (actual) throw new Error("Expected falsy");
+    },
+  };
+}
+
+// CLI entry (hanya jalan kalau dipanggil langsung)
 if (import.meta.url === `file://${process.argv[1]}`) {
   const argv = minimist(process.argv.slice(2));
   runCore(argv);

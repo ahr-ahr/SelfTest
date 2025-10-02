@@ -1,4 +1,4 @@
-const { selftest, run } = require("../selftest");
+const { selftest, run } = require("../../selftest");
 
 selftest("math add", () => {
   expect(1 + 2).toBe(3);
